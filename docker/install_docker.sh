@@ -21,4 +21,4 @@ apt-get install -y docker-ce
 systemctl status docker
 
 # To check whether you can access and download images from Docker Hub, type:
-docker run hello-world
+# docker run hello-world
