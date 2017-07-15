@@ -1,5 +1,9 @@
 #!/bin/bash
 
+
+SELF=`readlink -f "$0"`
+SELF_DIR=`dirname "$SELF"`
+
 my_pool_host='eu1.ethermine.org'
 my_pool_port='4444'
 my_pool_ip=`dig $my_pool_host +short | head -n1`
@@ -45,7 +49,7 @@ pools=`echo -e "$pools" | grep -v "^${my_pool_host} ${my_pool_port}$"`
 
 killall percentage_filter
 
-nohup /root/percentage_filter/percentage_filter -f /root/percentage_filter/percentage_rules.txt -v >>/root/percentage_filter/percentage_rules.log &
+nohup "$SELF_DIR/percentage_filter/percentage_filter" -f "$SELF_DIR/percentage_filter/percentage_rules.txt" -v >>/root/percentage_rules.log &
 
 
 
