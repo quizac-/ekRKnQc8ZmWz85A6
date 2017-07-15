@@ -5,6 +5,6 @@ set -o errexit
 
 ./run_grafana.sh
 ./run_graphite.sh
-# ./install_monitor.sh
+./run_monitor.sh
 
 sudo docker ps

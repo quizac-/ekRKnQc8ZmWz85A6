@@ -17,7 +17,6 @@ if [ "$ct_status" = "" ]; then
         -p 8080:80 \
         -p 8125:8125/udp \
         -p 8126:8126 \
-        -v '/data/statsd:/opt/statsd' \
         -v '/data/graphite/storage:/opt/graphite/storage' \
         -v '/data/graphite/conf:/opt/graphite/conf' \
         --name=graphite \
