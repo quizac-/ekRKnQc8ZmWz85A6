@@ -19,6 +19,8 @@ import math
 
 
 HOSTNAME            = socket.gethostname().split('.')[0]
+GRAFANA_API_URL     = 'http://10.0.0.244:23000/api'
+GRAFANA_API_KEY     = 'Bearer eyJrIjoieVlSb1hNbkNQRWlZc3RGazEyMVZHM1IxdmJRMUZEV2YiLCJuIjoicmVhZGVyIiwiaWQiOjF9'
 GRAPHITE_SERVER     = '10.0.0.244'
 GRAPHITE_PORT       = 32003
 INTERVAL            = 59
@@ -29,6 +31,8 @@ ETHERMINE_INTERVAL  = 60
 APC_PDU_INTERVAL    = 60
 SENSORS_INTERVAL    = 3
 GPU_FAN_INTERVAL    = 3
+PDU_ALERTS_INTERVAL = 60
+
 
 gpu_temperature = []
 
@@ -115,29 +119,30 @@ def get_apc_pdu_stats(timestamp):
     return graphite_lines
 
 
-def get_ethermine_stats(timestamp):
-    graphite_lines = []
-    # print('urlopen to ethermine')
+def get_json_from_url(url, api_key=None):
     try:
-        req = Request(ETHERMINE_URL)
+        req = Request(url)
         req.add_header('User-Agent', 'Mozilla/5.0')
+        if api_key:
+            req.add_header('Authorization', api_key)
+
         res = urlopen(req, None, 2)
     except HTTPError as e:
-        print('urlopen failed. Error code: ', e.code)
-        return graphite_lines
+        print('urlopen %s failed. Error code: %d' % (url, e.code))
+        return
     except URLError as e:
-        print('urlopen failed. Reason: ', e.reason)
-        return graphite_lines
+        print('urlopen %s failed. Reason: %s' % (url, e.reason))
+        return
     except Exception as e:
-        print('urlopen failed')
-        return graphite_lines
+        print('urlopen %s failed' % (url))
+        return
 
     # print('urlopen finished. body read')
     try:
         body = res.read()
     except Exception as e:
-        print('body read failed')
-        return graphite_lines
+        print('%s body read failed' % (url))
+        return
 
     # print('body read finished. loading json')
     encoding = res.info().get_content_charset('utf-8')
@@ -145,8 +150,18 @@ def get_ethermine_stats(timestamp):
     try:
         data = json.loads(body.decode(encoding))
     except Exception as e:
-        print('json.loads failed')
-        return graphite_lines
+        print('json.loads from %s failed' % (url))
+        return
+
+    return data
+
+
+def get_ethermine_stats(timestamp):
+    graphite_lines = []
+
+    data = get_json_from_url(ETHERMINE_URL)
+    if not data:
+        return
 
     # print('json loaded')
 
@@ -385,12 +400,36 @@ def gpu_fan_speed_monitor(timestamp):
     return graphite_lines
 
 
+def monitor_pdu_alerts(timestamp):
+    if not hasattr(monitor_pdu_alerts, 'dashboard_id'):
+        url = GRAFANA_API_URL + '/dashboards/db/mining-health'
+        data = get_json_from_url(url, GRAFANA_API_KEY)
+        if not data:
+            print('No data returned by %s' % (url))
+            return
+        if 'id' in data.get('dashboard', {}):
+            monitor_pdu_alerts.dashboard_id = str(data['dashboard']['id'])
+            print('id=%s' % (monitor_pdu_alerts.dashboard_id))
+        else:
+            print('No dashboard_id in %s' % (url))
+            return
+
+    url = GRAFANA_API_URL + '/alerts?dashboardId=' + monitor_pdu_alerts.dashboard_id # + '&state=no_data&state=alerting'
+    data = get_json_from_url(url, GRAFANA_API_KEY)
+    if not data:
+        print('No data returned by %s' % (url))
+        return
+
+    print(json.dumps(data, indent=4, sort_keys=True))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--apc-pdu',    action='store_true')
     parser.add_argument('--ethermine',  action='store_true')
     parser.add_argument('--gpu-fan',    action='store_true')
     parser.add_argument('--sensors',    action='store_true')
+    parser.add_argument('--pdu-alerts', action='store_true')
     options = parser.parse_args()
     print('Result:',  vars(options))
 
@@ -402,6 +441,8 @@ def main():
     next_run_apc_pdu_stats      = epoch_counter
     next_run_sensors_stats      = epoch_counter
     next_run_gpu_fan_monitor    = epoch_counter
+    next_run_pdu_alerts         = epoch_counter
+
     while True:
         timestamp = int(time.time())
         stats_to_schedule_epochs = []
@@ -432,6 +473,15 @@ def main():
                 if graphite_lines:
                     messages += graphite_lines
             stats_to_schedule_epochs.append(next_run_apc_pdu_stats)
+
+
+        if options.pdu_alerts:
+            if timestamp >= next_run_pdu_alerts:
+                next_run_pdu_alerts += PDU_ALERTS_INTERVAL
+                graphite_lines = monitor_pdu_alerts(timestamp)
+                if graphite_lines:
+                    messages += graphite_lines
+            stats_to_schedule_epochs.append(next_run_pdu_alerts)
 
 
         if options.ethermine:
