@@ -367,7 +367,7 @@ def gpu_fan_speed_monitor(timestamp):
                     continue
                 else:
                     gpu_fan_speed_monitor.fan_delay[i] += 1
-                    if gpu_fan_speed_monitor.fan_delay[i] < 10:
+                    if gpu_fan_speed_monitor.fan_delay[i] < 20:
                         if get_sensors_stats.skip_counter == 0:
                             graphite_lines.append('mining.%s.GPU.%d.fan %d %d' % (HOSTNAME, i, last_speed*100/255, timestamp))
                         continue
