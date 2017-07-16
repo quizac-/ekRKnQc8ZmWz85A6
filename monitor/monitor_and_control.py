@@ -19,7 +19,9 @@ import math
 import dateutil.parser
 
 HOSTNAME            = socket.gethostname().split('.')[0]
-GRAFANA_API_URL     = 'http://10.0.0.244:23000/api'
+GRAFANA_IP          = '10.0.0.244'
+GRAFANA_PORT        = '23000'
+GRAFANA_API_URL     = 'http://' + GRAFANA_IP + ':' + GRAFANA_PORT + '/api'
 GRAFANA_API_KEY     = 'Bearer eyJrIjoieVlSb1hNbkNQRWlZc3RGazEyMVZHM1IxdmJRMUZEV2YiLCJuIjoicmVhZGVyIiwiaWQiOjF9'
 GRAPHITE_SERVER     = '10.0.0.244'
 GRAPHITE_PORT       = 32003
@@ -532,7 +534,7 @@ def monitor_pdu_alerts(timestamp):
     url = GRAFANA_API_URL + '/alerts?dashboardId=' + monitor_pdu_alerts.dashboard_id + '&state=no_data&state=alerting'
     data = get_json_from_url(url, GRAFANA_API_KEY)
     if not data:
-        print('No data returned by %s' % (url))
+        # print('No data returned by %s' % (url))
         return
 
     # print(json.dumps(data, indent=4, sort_keys=True))
