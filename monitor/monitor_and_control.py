@@ -545,7 +545,14 @@ def monitor_pdu_alerts(timestamp):
         else:
             continue
 
-        alerting_state, pdu = message.split(':')
+        if not message:
+            continue
+
+        try:
+            alerting_state, pdu = message.split(':')
+        except Exception as e:
+            continue
+
         alerting_states = alerting_state.split(',')
         # print('alerting_states=%s, pdu=%s' % (repr(alerting_states), pdu))
 
