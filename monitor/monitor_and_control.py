@@ -16,7 +16,7 @@ import sys
 import argparse
 import re
 import math
-
+import dateutil.parser
 
 HOSTNAME            = socket.gethostname().split('.')[0]
 GRAFANA_API_URL     = 'http://10.0.0.244:23000/api'
@@ -77,18 +77,78 @@ def sleep_until_epoch(wake_up_epoch):
         time.sleep(delta)
 
 
-def get_apc_pdu_stats(timestamp):
-    graphite_lines = []
-    # print('calling snmpget')
-    stdoutdata = subprocess.getoutput("snmpget -r0 -t1 -v1 -c public -O qv 10.0.0.249 .1.3.6.1.4.1.318.1.1.12.2.3.1.1.2.1 2>/dev/null")
+pdus = {
+    1: {
+        'ip': '10.0.0.249',
+        'ro_community':     'public',
+        'rw_community':     'private',
+        'load_read_oid':    '.1.3.6.1.4.1.318.1.1.12.2.3.1.1.2.1',
+        'port_ctl_oid':     '.1.3.6.1.4.1.318.1.1.4.4.2.1.3',
+        'ports': {
+            1: { 
+                'name': 'quizac_r1',
+                'last_reboot': 0,
+            },
+            2: {
+                'name': 'test_port2',
+                'last_reboot': 0,
+            },
+        }
+    }
+}
+
+
+
+def snmpget_from_pdu(pdu_number):
+    pdu_ip = pdus[pdu_number]['ip']
+    community = pdus[pdu_number]['ro_community']
+    oid = pdus[pdu_number]['load_read_oid']
+
+
+    snmp_command = 'snmpget -r0 -t1 -v1 -c %s -O qv %s %s 2>/dev/null' % (community, pdu_ip, oid)
+
+    # print('calling snmp command: %s' % (snmp_command))
+    stdoutdata = subprocess.getoutput(snmp_command)
     # print('snmpget finished')
 
-    if stdoutdata:
+    return stdoutdata
+
+
+def snmpset_pdu(pdu_number, port_number, int_value):
+    pdu_ip = pdus[pdu_number]['ip']
+    community = pdus[pdu_number]['rw_community']
+    oid = pdus[pdu_number]['port_ctl_oid'] + '.' + str(port_number)
+
+    # snmpset -r0 -t1 -v1 -c private -O qv 10.0.0.249 .1.3.6.1.4.1.318.1.1.4.4.2.1.3.2 i 3
+    snmp_command = 'snmpset -r0 -t1 -v1 -c %s -O qv %s %s i %d 2>/dev/null' % (community, pdu_ip, oid, int_value)
+
+    # print('calling snmp command: %s' % (snmp_command))
+    stdoutdata = subprocess.getoutput(snmp_command)
+    # print('snmpget finished')
+
+    if stdoutdata and (stdoutdata == str(int_value)):
+        return True
+
+    print('stdoutdata failed: %s' % (stdoutdata))
+    return False
+
+
+def get_apc_pdu_stats(timestamp):
+    global pdus
+    graphite_lines = []
+
+    for pdu_number in sorted(pdus.keys()):
+        stdoutdata = snmpget_from_pdu(pdu_number)
+
+        if not stdoutdata:
+            print('no stdoutdata for ' + str(pdu_number))
+            continue
+
         try:
             ampers = float(stdoutdata)
             ampers /= 10
         except Exception as e:
-            print('no float delivered')
+            print('no float delivered for ' + str(pdu_number))
             return graphite_lines
 
         # Hochtarif (HT) Montag bis Freitag 07:00 . 20:00 Uhr = 65h
@@ -106,15 +166,13 @@ def get_apc_pdu_stats(timestamp):
         chf_per_month   = chf_per_week * 4.34
         chf_per_year    = chf_per_day * 365
 
-        graphite_lines.append('pdu.1.total_load %s %d' % (ampers, timestamp))
-        graphite_lines.append('pdu.1.watts %s %d' % (watts, timestamp))
-        graphite_lines.append('pdu.1.CHFperHour %s %d' % (chf_per_hour, timestamp))
-        graphite_lines.append('pdu.1.CHFperDay %s %d' % (chf_per_day, timestamp))
-        graphite_lines.append('pdu.1.CHFperWeek %s %d' % (chf_per_week, timestamp))
-        graphite_lines.append('pdu.1.CHFperMonth %s %d' % (chf_per_month, timestamp))
-        graphite_lines.append('pdu.1.CHFperYear %s %d' % (chf_per_year, timestamp))
-    else:
-        print('no stdoutdata')
+        graphite_lines.append('pdu.%d.total_load %s %d'     % (pdu_number, ampers, timestamp))
+        graphite_lines.append('pdu.%d.watts %s %d'          % (pdu_number, watts, timestamp))
+        graphite_lines.append('pdu.%d.CHFperHour %s %d'     % (pdu_number, chf_per_hour, timestamp))
+        graphite_lines.append('pdu.%d.CHFperDay %s %d'      % (pdu_number, chf_per_day, timestamp))
+        graphite_lines.append('pdu.%d.CHFperWeek %s %d'     % (pdu_number, chf_per_week, timestamp))
+        graphite_lines.append('pdu.%d.CHFperMonth %s %d'    % (pdu_number, chf_per_month, timestamp))
+        graphite_lines.append('pdu.%d.CHFperYear %s %d'     % (pdu_number, chf_per_year, timestamp))
 
     return graphite_lines
 
@@ -198,47 +256,47 @@ def get_ethermine_stats(timestamp):
 
     return graphite_lines
 
+'''
+09:02 PM root@83f54e 10.0.0.3 [168.1 hash] /root/tuning # sensors
+amdgpu-pci-0300
+Adapter: PCI adapter
+temp1:        +49.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
 
-#09:02 PM root@83f54e 10.0.0.3 [168.1 hash] /root/tuning # sensors
-#amdgpu-pci-0300
-#Adapter: PCI adapter
-#temp1:        +49.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
-#
-#asus-isa-0000
-#Adapter: ISA adapter
-#cpu_fan:        0 RPM
-#
-#acpitz-virtual-0
-#Adapter: Virtual device
-#temp1:        +27.8°C  (crit = +119.0°C)
-#temp2:        +29.8°C  (crit = +119.0°C)
-#
-#amdgpu-pci-0700
-#Adapter: PCI adapter
-#temp1:        +47.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
-#
-#amdgpu-pci-0500
-#Adapter: PCI adapter
-#temp1:        +52.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
-#
-#amdgpu-pci-0100
-#Adapter: PCI adapter
-#temp1:        +50.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
-#
-#coretemp-isa-0000
-#Adapter: ISA adapter
-#Physical id 0:  +37.0°C  (high = +84.0°C, crit = +100.0°C)
-#Core 0:         +36.0°C  (high = +84.0°C, crit = +100.0°C)
-#Core 1:         +37.0°C  (high = +84.0°C, crit = +100.0°C)
-#
-#amdgpu-pci-0800
-#Adapter: PCI adapter
-#temp1:        +45.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
-#
-#amdgpu-pci-0600
-#Adapter: PCI adapter
-#temp1:        +48.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
-#
+asus-isa-0000
+Adapter: ISA adapter
+cpu_fan:        0 RPM
+
+acpitz-virtual-0
+Adapter: Virtual device
+temp1:        +27.8°C  (crit = +119.0°C)
+temp2:        +29.8°C  (crit = +119.0°C)
+
+amdgpu-pci-0700
+Adapter: PCI adapter
+temp1:        +47.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
+
+amdgpu-pci-0500
+Adapter: PCI adapter
+temp1:        +52.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
+
+amdgpu-pci-0100
+Adapter: PCI adapter
+temp1:        +50.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
+
+coretemp-isa-0000
+Adapter: ISA adapter
+Physical id 0:  +37.0°C  (high = +84.0°C, crit = +100.0°C)
+Core 0:         +36.0°C  (high = +84.0°C, crit = +100.0°C)
+Core 1:         +37.0°C  (high = +84.0°C, crit = +100.0°C)
+
+amdgpu-pci-0800
+Adapter: PCI adapter
+temp1:        +45.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
+
+amdgpu-pci-0600
+Adapter: PCI adapter
+temp1:        +48.0°C  (crit =  +0.0°C, hyst =  +0.0°C)
+'''
 
 def get_sensors_stats(timestamp):
     global gpu_temperature
@@ -399,8 +457,65 @@ def gpu_fan_speed_monitor(timestamp):
 
     return graphite_lines
 
+'''
+    {
+        "dashboardId": 3,
+        "dashboardUri": "db/mining-health",
+        "evalData": {
+            "evalMatches": [
+                {
+                    "metric": "mining.83f54e.GPU.4.mclk",
+                    "tags": null,
+                    "value": 2080
+                }
+            ]
+        },
+        "evalDate": "0001-01-01T00:00:00Z",
+        "executionError": "",
+        "id": 9,
+        "message": "",
+        "name": "Alert test alert",
+        "newStateDate": "2017-07-16T08:22:35Z",
+        "panelId": 16,
+        "state": "alerting"
+    },
+
+    {
+        "dashboardId": 3,
+        "dashboardUri": "db/mining-health",
+        "evalData": null,
+        "evalDate": "0001-01-01T00:00:00Z",
+        "executionError": "",
+        "id": 9,
+        "message": "",
+        "name": "Alert test alert [pdu1p1]",
+        "newStateDate": "2017-07-16T08:38:29Z",
+        "panelId": 16,
+        "state": "no_data"
+    }
+    {
+        "dashboardId": 3,
+        "dashboardUri": "db/mining-health",
+        "evalData": {
+            "noData": true
+        },
+        "evalDate": "0001-01-01T00:00:00Z",
+        "executionError": "",
+        "id": 9,
+        "message": "no_data,alerting:pdu1p1",
+        "name": "Alert test alert",
+        "newStateDate": "2017-07-16T09:13:49Z",
+        "panelId": 16,
+        "state": "no_data"
+    }
+
+'''
+
+
 
 def monitor_pdu_alerts(timestamp):
+    global pdus
+
     if not hasattr(monitor_pdu_alerts, 'dashboard_id'):
         url = GRAFANA_API_URL + '/dashboards/db/mining-health'
         data = get_json_from_url(url, GRAFANA_API_KEY)
@@ -409,18 +524,59 @@ def monitor_pdu_alerts(timestamp):
             return
         if 'id' in data.get('dashboard', {}):
             monitor_pdu_alerts.dashboard_id = str(data['dashboard']['id'])
-            print('id=%s' % (monitor_pdu_alerts.dashboard_id))
+            # print('id=%s' % (monitor_pdu_alerts.dashboard_id))
         else:
             print('No dashboard_id in %s' % (url))
             return
 
-    url = GRAFANA_API_URL + '/alerts?dashboardId=' + monitor_pdu_alerts.dashboard_id # + '&state=no_data&state=alerting'
+    url = GRAFANA_API_URL + '/alerts?dashboardId=' + monitor_pdu_alerts.dashboard_id + '&state=no_data&state=alerting'
     data = get_json_from_url(url, GRAFANA_API_KEY)
     if not data:
         print('No data returned by %s' % (url))
         return
 
-    print(json.dumps(data, indent=4, sort_keys=True))
+    # print(json.dumps(data, indent=4, sort_keys=True))
+
+    for alert_section in data:
+        if 'message' in alert_section.keys():
+            message = alert_section['message']
+        else:
+            continue
+
+        alerting_state, pdu = message.split(':')
+        alerting_states = alerting_state.split(',')
+        # print('alerting_states=%s, pdu=%s' % (repr(alerting_states), pdu))
+
+        if alert_section['state'] not in alerting_states:
+            continue
+
+        print('%s raised by Dashboard %s' % (alert_section['name'], alert_section['dashboardUri']))
+        pdu_search = re.search('pdu(\d+)p(\d+)', pdu)
+        if pdu_search:
+            pdu_number      = int(pdu_search.group(1))
+            pdu_port_number = int(pdu_search.group(2))
+        else:
+            print('No PDU info found')
+            continue
+
+        print('pdu_number=%d, pdu_port_number=%d' % (pdu_number, pdu_port_number))
+
+        last_state_change = dateutil.parser.parse(alert_section['newStateDate'])
+        last_state_change = last_state_change.timestamp()
+        last_state_delta = timestamp - last_state_change
+        last_reboot_delta = timestamp - pdus[pdu_number]['ports'][pdu_port_number]['last_reboot']
+        print('last_state_change=%s, last_state_delta=%d, last_reboot_delta=%d' % (last_state_change, last_state_delta, last_reboot_delta))
+
+
+        if (last_state_delta >= 300) and (last_reboot_delta >= 300):
+            pdus[pdu_number]['ports'][pdu_port_number]['last_reboot'] = timestamp
+            print('Rebooting PDU %d port %d %s' % (pdu_number, pdu_port_number, pdus[pdu_number]['ports'][pdu_port_number]['name']))
+
+            if not snmpset_pdu(pdu_number, pdu_port_number, 3):
+                print('Rebooting PDU %d port %d %s failed' % (pdu_number, pdu_port_number, pdus[pdu_number]['ports'][pdu_port_number]['name']))
+                continue
+
+            print('Rebooted PDU %d port %d %s' % (pdu_number, pdu_port_number, pdus[pdu_number]['ports'][pdu_port_number]['name']))
 
 
 def main():
